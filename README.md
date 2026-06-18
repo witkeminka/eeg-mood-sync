@@ -56,9 +56,9 @@ Full report: `models/metrics.json` · confusion matrix: `docs/screenshots/confus
 
 ## Quick start
 
+Clone this repository, then:
+
 ```bash
-git clone https://github.com/YOUR_USERNAME/eeg-mood-sync.git
-cd eeg-mood-sync
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
