@@ -19,3 +19,4 @@ models/*.joblib
 !docs/screenshots/
 !docs/screenshots/*.png
 !docs/demo.mp4
+!docs/demo.wav

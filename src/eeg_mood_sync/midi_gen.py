@@ -15,22 +15,26 @@ class MidiConfig:
     channel_melody: int = 0
     channel_pad: int = 1
     channel_bass: int = 2
+    channel_arp: int = 3
+    channel_drums: int = 9
 
 
-# Scale degrees (semitones from root within one octave, then wrapped)
 SCALES: dict[str, tuple[int, ...]] = {
-    "relaxed": (0, 2, 4, 7, 9),  # major pentatonic
-    "neutral": (0, 2, 3, 5, 7, 9, 10),  # dorian
-    "focused": (0, 3, 5, 7, 10),  # minor pentatonic
-    "aroused": (0, 2, 3, 5, 7, 8, 11),  # harmonic minor-ish
+    "relaxed": (0, 2, 4, 7, 9),
+    "neutral": (0, 2, 3, 5, 7, 9, 10),
+    "focused": (0, 3, 5, 7, 10),
+    "aroused": (0, 2, 3, 5, 7, 8, 11),
 }
 
 CHORD_DEGREES: dict[str, tuple[tuple[int, ...], ...]] = {
-    "relaxed": ((0, 4, 7), (9, 12, 16), (5, 9, 12)),  # I – vi – IV
-    "neutral": ((0, 3, 7), (5, 8, 12), (3, 7, 10)),
-    "focused": ((0, 3, 7), (8, 12, 15), (5, 8, 12)),
-    "aroused": ((0, 4, 7), (3, 7, 10), (8, 11, 15)),
+    "relaxed": ((0, 4, 7), (9, 12, 16), (5, 9, 12), (7, 11, 14)),
+    "neutral": ((0, 3, 7), (5, 8, 12), (3, 7, 10), (8, 12, 15)),
+    "focused": ((0, 3, 7), (8, 12, 15), (5, 8, 12), (3, 7, 10)),
+    "aroused": ((0, 4, 7), (3, 7, 10), (8, 11, 15), (5, 9, 12)),
 }
+
+# General MIDI drum map (channel 10)
+KICK, SNARE, CLOSED_HAT, OPEN_HAT = 36, 38, 42, 46
 
 
 def _ticks_per_beat() -> int:
@@ -38,57 +42,33 @@ def _ticks_per_beat() -> int:
 
 
 def _scale_for_params(p: MoodParams) -> tuple[int, ...]:
-    if p.bpm < 78 and p.gate > 0.65:
+    if p.bpm < 88 and p.gate > 0.55:
         return SCALES["relaxed"]
-    if p.density > 0.72:
+    if p.density > 0.78:
         return SCALES["aroused"]
-    if p.density > 0.5:
+    if p.density > 0.58:
         return SCALES["focused"]
-    if p.bpm < 95:
+    if p.bpm < 105:
         return SCALES["relaxed"]
     return SCALES["neutral"]
 
 
 def _chords_for_params(p: MoodParams) -> tuple[tuple[int, ...], ...]:
-    if p.bpm < 78 and p.gate > 0.65:
+    if p.bpm < 88 and p.gate > 0.55:
         return CHORD_DEGREES["relaxed"]
-    if p.density > 0.72:
+    if p.density > 0.78:
         return CHORD_DEGREES["aroused"]
-    if p.density > 0.5:
+    if p.density > 0.58:
         return CHORD_DEGREES["focused"]
     return CHORD_DEGREES["neutral"]
 
 
-def _degree_to_midi(
-    degree_idx: int,
-    *,
-    root: int,
-    scale: tuple[int, ...],
-    octave: int,
-) -> int:
+def _degree_to_midi(degree_idx: int, *, root: int, scale: tuple[int, ...], octave: int) -> int:
     n = len(scale)
     wrapped = degree_idx % n
     octaves = degree_idx // n
     semitone = scale[wrapped] + 12 * (octave + octaves)
     return int(max(0, min(127, root + semitone)))
-
-
-def _step_degree(
-    rng: np.random.Generator,
-    current: int,
-    *,
-    scale_len: int,
-    arousal: float,
-    motif_step: int | None,
-) -> int:
-    if motif_step is not None:
-        return int(np.clip(current + motif_step, 0, scale_len * 3 - 1))
-    # Prefer small melodic steps; arousal adds occasional leaps.
-    weights = np.array([0.35, 0.30, 0.20, 0.10, 0.05], dtype=np.float64)
-    if arousal > 0.55:
-        weights = np.array([0.20, 0.25, 0.20, 0.20, 0.15])
-    step = int(rng.choice([-2, -1, 0, 1, 2], p=weights / weights.sum()))
-    return int(np.clip(current + step, 0, scale_len * 3 - 1))
 
 
 @dataclass
@@ -109,7 +89,18 @@ def _append_note(
     duration_ticks: int,
 ) -> None:
     events.append((tick, "on", channel, note, velocity))
-    events.append((tick + duration_ticks, "off", channel, note, 0))
+    events.append((tick + max(1, duration_ticks), "off", channel, note, 0))
+
+
+def _append_drum(
+    events: list[tuple[int, str, int, int, int]],
+    *,
+    tick: int,
+    note: int,
+    velocity: int,
+    duration_ticks: int = 80,
+) -> None:
+    _append_note(events, tick=tick, channel=9, note=note, velocity=velocity, duration_ticks=duration_ticks)
 
 
 def _events_to_track(events: list[tuple[int, str, int, int, int]]) -> mido.MidiTrack:
@@ -120,14 +111,19 @@ def _events_to_track(events: list[tuple[int, str, int, int, int]]) -> mido.MidiT
         delta = max(0, tick - last_tick)
         last_tick = tick
         if kind == "on":
-            track.append(
-                mido.Message("note_on", note=note, velocity=velocity, channel=channel, time=delta)
-            )
+            track.append(mido.Message("note_on", note=note, velocity=velocity, channel=channel, time=delta))
         else:
-            track.append(
-                mido.Message("note_off", note=note, velocity=0, channel=channel, time=delta)
-            )
+            track.append(mido.Message("note_off", note=note, velocity=0, channel=channel, time=delta))
     return track
+
+
+def _sixteenth_ticks(bpm: int) -> int:
+    return max(1, int(round(_ticks_per_beat() / 4)))
+
+
+def _params_at(params_list: list[MoodParams], step_idx: int, steps_per_param: int) -> MoodParams:
+    param_idx = min(len(params_list) - 1, step_idx // max(1, steps_per_param))
+    return params_list[param_idx]
 
 
 def generate_ambient_midi(
@@ -138,180 +134,200 @@ def generate_ambient_midi(
     config: MidiConfig = MidiConfig(),
 ) -> mido.MidiFile:
     """
-    Multi-layer generative ambient piece driven by MoodParams.
+    Beat-synced generative track driven by MoodParams.
 
-    Layers:
-    - Bass root (slow, grounding)
-    - Pad chords (warm harmony, EEG-driven progression)
-    - Melody (motif + stepwise improvisation)
+    Layers: drums, bass, arp, pad chords, lead melody.
     """
     rng = np.random.default_rng(seed)
     params_list = list(params_stream)
     if not params_list:
-        params_list = [MoodParams(bpm=90, register=0, density=0.6, velocity=65, gate=0.7)]
+        params_list = [MoodParams(bpm=110, register=0, density=0.75, velocity=72, gate=0.55)]
 
-    step_s = 0.35
-    steps = int(max(8, round(seconds / step_s)))
+    avg_bpm = int(np.mean([p.bpm for p in params_list]))
+    sixteenth = _sixteenth_ticks(avg_bpm)
+    sixteenth_s = (sixteenth / _ticks_per_beat()) * (60.0 / avg_bpm)
+    total_steps = int(max(32, round(seconds / sixteenth_s)))
+    steps_per_param = max(8, total_steps // max(len(params_list), 1))
 
     melody_events: list[tuple[int, str, int, int, int]] = []
     pad_events: list[tuple[int, str, int, int, int]] = []
     bass_events: list[tuple[int, str, int, int, int]] = []
-    tempo_events: list[tuple[int, int]] = [(0, mido.bpm2tempo(int(params_list[0].bpm)))]
+    arp_events: list[tuple[int, str, int, int, int]] = []
+    drum_events: list[tuple[int, str, int, int, int]] = []
+    tempo_events: list[tuple[int, int]] = [(0, mido.bpm2tempo(avg_bpm))]
 
     melody = _MelodyState(
-        degree=2,
-        motif=tuple(int(x) for x in rng.choice([-1, 0, 1, 2], size=5)),
+        degree=3,
+        motif=tuple(int(x) for x in rng.choice([-2, -1, 0, 1, 2, 3], size=8)),
         motif_pos=0,
     )
 
-    cumulative_tick = 0
     chord_idx = 0
-    current_chord_notes: list[int] = []
+    arp_degree = 0
+    last_bpm = avg_bpm
 
-    for i in range(steps):
-        p = params_list[min(i, len(params_list) - 1)]
-        arousal = float(np.clip(p.density * 0.7 + (1.0 - p.gate) * 0.3, 0.0, 1.0))
-        relax = float(np.clip(p.gate * 0.6 + (1.0 - p.density) * 0.4, 0.0, 1.0))
+    for step in range(total_steps):
+        tick = step * sixteenth
+        beat_in_bar = step % 16
+        bar = step // 16
 
+        p = _params_at(params_list, step, steps_per_param)
+        arousal = float(np.clip(p.density * 0.75 + (1.0 - p.gate) * 0.25, 0.0, 1.0))
+        relax = float(np.clip(p.gate * 0.5 + (1.0 - p.density) * 0.5, 0.0, 1.0))
         scale = _scale_for_params(p)
         chords = _chords_for_params(p)
-        beats = step_s * (p.bpm / 60.0)
-        step_ticks = max(1, int(round(beats * _ticks_per_beat())))
+        sixteenth = _sixteenth_ticks(p.bpm)
 
-        if i == 0 or params_list[min(i - 1, len(params_list) - 1)].bpm != p.bpm:
-            tempo_events.append((cumulative_tick, mido.bpm2tempo(int(p.bpm))))
+        if p.bpm != last_bpm:
+            tempo_events.append((tick, mido.bpm2tempo(int(p.bpm))))
+            last_bpm = p.bpm
 
-        # --- Bass (every 2 steps, root of current chord) ---
-        if i % 2 == 0:
-            chord = chords[chord_idx % len(chords)]
-            root_note = _degree_to_midi(
-                chord[0] // 4,
-                root=config.key_root - 12,
-                scale=scale,
-                octave=-1 + p.register // 2,
-            )
-            bass_vel = int(np.clip(45 + 25 * relax, 35, 85))
-            bass_dur = int(step_ticks * (2.2 + p.gate))
+        chord = chords[(bar // 2) % len(chords)]
+        chord_notes = [
+            _degree_to_midi(max(0, iv // 3), root=config.key_root, scale=scale, octave=p.register)
+            for iv in chord
+        ]
+        bass_root = _degree_to_midi(
+            0, root=config.key_root - 12, scale=scale, octave=-1 + p.register // 2
+        )
+
+        # --- Drums: driving 16th grid ---
+        hat_vel = int(np.clip(55 + 40 * arousal, 45, 105))
+        if beat_in_bar % 2 == 0:
+            _append_drum(drum_events, tick=tick, note=CLOSED_HAT, velocity=hat_vel, duration_ticks=60)
+        if arousal > 0.5 and beat_in_bar % 4 == 2:
+            _append_drum(drum_events, tick=tick, note=OPEN_HAT, velocity=int(hat_vel * 0.8), duration_ticks=100)
+
+        if beat_in_bar % 4 == 0:
+            kick_vel = int(np.clip(90 + 20 * arousal, 80, 115))
+            _append_drum(drum_events, tick=tick, note=KICK, velocity=kick_vel, duration_ticks=120)
+
+        if beat_in_bar in (4, 12):
+            snare_vel = int(np.clip(75 + 30 * arousal, 65, 115))
+            _append_drum(drum_events, tick=tick, note=SNARE, velocity=snare_vel, duration_ticks=150)
+        elif arousal > 0.65 and beat_in_bar in (7, 15):
+            ghost_vel = int(np.clip(75 + 30 * arousal, 65, 115) * 0.55)
+            _append_drum(drum_events, tick=tick, note=SNARE, velocity=ghost_vel, duration_ticks=80)
+
+        # --- Bass: 8th-note groove ---
+        if beat_in_bar % 2 == 0:
+            bass_note = bass_root
+            if beat_in_bar in (4, 12) and arousal > 0.45:
+                bass_note = _degree_to_midi(2, root=config.key_root - 12, scale=scale, octave=-1 + p.register // 2)
+            elif beat_in_bar in (8,) and relax > 0.5:
+                bass_note = _degree_to_midi(4, root=config.key_root - 12, scale=scale, octave=-1 + p.register // 2)
+            bass_vel = int(np.clip(70 + 35 * arousal, 55, 115))
+            bass_dur = int(sixteenth * (1.6 + 0.4 * p.gate))
             _append_note(
                 bass_events,
-                tick=cumulative_tick,
+                tick=tick,
                 channel=config.channel_bass,
-                note=root_note,
+                note=bass_note,
                 velocity=bass_vel,
                 duration_ticks=bass_dur,
             )
 
-        # --- Pad chord (every 4 steps) ---
-        if i % 4 == 0:
-            chord = chords[chord_idx % len(chords)]
+        # --- Arp: constant 16ths (dense texture) ---
+        arp_degree = (arp_degree + (1 if arousal > 0.5 else 0)) % (len(scale) * 2)
+        arp_note = _degree_to_midi(
+            arp_degree, root=config.key_root + 12, scale=scale, octave=p.register + 1
+        )
+        arp_vel = int(np.clip(40 + 45 * arousal + 15 * relax, 35, 100))
+        if beat_in_bar % (1 if arousal > 0.7 else 2) == 0:
+            _append_note(
+                arp_events,
+                tick=tick,
+                channel=config.channel_arp,
+                note=arp_note,
+                velocity=arp_vel,
+                duration_ticks=int(sixteenth * 0.7),
+            )
+
+        # --- Pad: chord stab every bar ---
+        if beat_in_bar == 0:
             chord_idx += 1
-            pad_vel = int(np.clip(28 + 35 * relax + 10 * p.velocity / 127.0, 22, 72))
-            pad_dur = int(step_ticks * (3.5 + 2.0 * p.gate))
-            current_chord_notes = []
-            for interval in chord:
-                deg = max(0, interval // 3)
-                note = _degree_to_midi(
-                    deg,
-                    root=config.key_root,
-                    scale=scale,
-                    octave=p.register,
-                )
-                current_chord_notes.append(note)
+            pad_vel = int(np.clip(45 + 40 * relax, 38, 95))
+            pad_dur = int(sixteenth * (10 + 4 * p.gate))
+            for note in chord_notes:
                 _append_note(
                     pad_events,
-                    tick=cumulative_tick,
+                    tick=tick,
                     channel=config.channel_pad,
                     note=note,
                     velocity=pad_vel,
                     duration_ticks=pad_dur,
                 )
+            # Extra upper layer every 2 bars for lift
+            if bar % 2 == 1 and arousal > 0.4:
+                for note in chord_notes:
+                    _append_note(
+                        pad_events,
+                        tick=tick,
+                        channel=config.channel_pad,
+                        note=min(127, note + 12),
+                        velocity=int(pad_vel * 0.65),
+                        duration_ticks=int(pad_dur * 0.8),
+                    )
 
-        # --- Melody: motif + stepwise motion ---
-        subdiv = 2 if p.density > 0.65 else 1
-        sub_tick = cumulative_tick
-        sub_step_ticks = max(1, step_ticks // subdiv)
-
-        for sub in range(subdiv):
-            play_prob = 0.55 + 0.35 * p.density - 0.15 * (sub % 2)
-            if rng.random() > play_prob:
-                sub_tick += sub_step_ticks
-                continue
-
-            use_motif = rng.random() < 0.42
-            motif_step = melody.motif[melody.motif_pos % len(melody.motif)] if use_motif else None
+        # --- Lead melody: 8ths + fills on downbeats ---
+        melody_step = beat_in_bar % 8
+        play_lead = (
+            melody_step in (0, 2, 4, 6)
+            or (arousal > 0.6 and melody_step in (1, 5))
+            or (beat_in_bar == 0 and bar % 4 == 3)
+        )
+        if play_lead and rng.random() < (0.55 + 0.4 * p.density):
+            use_motif = rng.random() < 0.5
             if use_motif:
+                melody.degree = int(
+                    np.clip(
+                        melody.degree + melody.motif[melody.motif_pos % len(melody.motif)],
+                        0,
+                        len(scale) * 3 - 1,
+                    )
+                )
                 melody.motif_pos += 1
+            else:
+                step_dir = int(rng.choice([-1, 0, 1, 2], p=[0.3, 0.15, 0.4, 0.15]))
+                melody.degree = int(np.clip(melody.degree + step_dir, 0, len(scale) * 3 - 1))
 
-            melody.degree = _step_degree(
-                rng,
-                melody.degree,
-                scale_len=len(scale),
-                arousal=arousal,
-                motif_step=motif_step,
-            )
             note = _degree_to_midi(
-                melody.degree,
-                root=config.key_root + 12,
-                scale=scale,
-                octave=p.register + 1,
+                melody.degree, root=config.key_root + 12, scale=scale, octave=p.register + 2
             )
-
-            # Avoid immediate repeat; nudge by a scale step if needed.
-            if melody.last_note is not None and note == melody.last_note:
-                melody.degree = int(np.clip(melody.degree + rng.choice([-1, 1]), 0, len(scale) * 3 - 1))
+            if melody.last_note == note:
+                melody.degree = int(np.clip(melody.degree + 1, 0, len(scale) * 3 - 1))
                 note = _degree_to_midi(
-                    melody.degree,
-                    root=config.key_root + 12,
-                    scale=scale,
-                    octave=p.register + 1,
+                    melody.degree, root=config.key_root + 12, scale=scale, octave=p.register + 2
                 )
             melody.last_note = note
 
-            mel_vel = int(np.clip(p.velocity - 8 + rng.integers(-6, 8), 40, 105))
-            mel_dur = int(sub_step_ticks * (0.55 + 0.45 * p.gate))
+            mel_vel = int(np.clip(p.velocity + rng.integers(-5, 12), 55, 118))
+            mel_dur = int(sixteenth * (1.2 + 1.5 * p.gate))
             _append_note(
                 melody_events,
-                tick=sub_tick,
+                tick=tick,
                 channel=config.channel_melody,
                 note=note,
                 velocity=mel_vel,
                 duration_ticks=mel_dur,
             )
 
-            # Soft arpeggio echo on high arousal (beta/gamma profile)
-            if arousal > 0.58 and current_chord_notes and rng.random() < 0.35:
-                arp_note = int(rng.choice(current_chord_notes)) + 12
-                _append_note(
-                    melody_events,
-                    tick=sub_tick + sub_step_ticks // 3,
-                    channel=config.channel_melody,
-                    note=min(127, arp_note),
-                    velocity=int(mel_vel * 0.65),
-                    duration_ticks=max(1, mel_dur // 2),
-                )
-
-            sub_tick += sub_step_ticks
-
-        cumulative_tick += step_ticks
-
     mid = mido.MidiFile(ticks_per_beat=_ticks_per_beat())
     meta = mido.MidiTrack()
     mid.tracks.append(meta)
     last = 0
-    for tick, tempo in sorted(tempo_events, key=lambda x: x[0]):
-        delta = max(0, tick - last)
-        meta.append(mido.MetaMessage("set_tempo", tempo=tempo, time=delta))
-        last = tick
+    for t, tempo in sorted(tempo_events, key=lambda x: x[0]):
+        meta.append(mido.MetaMessage("set_tempo", tempo=tempo, time=max(0, t - last)))
+        last = t
 
-    for ev in (bass_events, pad_events, melody_events):
+    for ev in (drum_events, bass_events, arp_events, pad_events, melody_events):
         if ev:
             mid.tracks.append(_events_to_track(ev))
 
     if len(mid.tracks) == 1:
-        # Fallback: at least one note so WAV render works.
         track = mido.MidiTrack()
         mid.tracks.append(track)
-        track.append(mido.Message("note_on", note=60, velocity=60, channel=0, time=0))
+        track.append(mido.Message("note_on", note=60, velocity=80, channel=0, time=0))
         track.append(mido.Message("note_off", note=60, velocity=0, channel=0, time=480))
 
     return mid

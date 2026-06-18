@@ -8,8 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHOTS = ROOT / "docs" / "screenshots"
-WAV = ROOT / "outputs" / "sub01_portfolio.wav"
+WAV = ROOT / "outputs" / "sub01_track.wav"
 OUT = ROOT / "docs" / "demo.mp4"
+DEMO_WAV = ROOT / "docs" / "demo.wav"
 DURATION = 45  # seconds
 
 
@@ -78,6 +79,19 @@ def main() -> None:
                 str(trimmed_wav),
             ]
         )
+        run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(WAV),
+                "-t",
+                str(DURATION),
+                "-ac",
+                "1",
+                str(DEMO_WAV),
+            ]
+        )
 
         final.parent.mkdir(parents=True, exist_ok=True)
         run(
@@ -104,6 +118,7 @@ def main() -> None:
         )
 
     print(f"Demo video: {final} ({DURATION}s)")
+    print(f"Demo audio: {DEMO_WAV} ({DURATION}s)")
 
 
 if __name__ == "__main__":

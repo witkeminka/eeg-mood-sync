@@ -133,7 +133,7 @@ docs/screenshots/  # portfolio figures
 - **Rule + ML hybrid** — BPM regressor learns from heuristic labels derived from the same bands; classifier is the stronger ML story.
 - **Gamma** is sensitive to muscle artefact; interpret with caution.
 - **Offline replay** — not real-time Muse/LSL (possible extension).
-- **Simple sine WAV renderer** — for portfolio listening; swap FluidSynth for production quality.
+- **Built-in synth renderer** — drums + layered voices; swap FluidSynth + soundfont for studio-grade timbres.
 
 ---
 
@@ -145,10 +145,6 @@ docs/screenshots/  # portfolio figures
 - [ ] Stable Diffusion prompt branch from band features
 
 ---
-
-## Author
-
-Minka Witke — portfolio project (AIML / neurotech)
 
 ## Dataset citation
 

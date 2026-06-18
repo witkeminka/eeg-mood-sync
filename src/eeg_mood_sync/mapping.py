@@ -32,11 +32,11 @@ def bands_to_params(bands: BandPowers) -> MoodParams:
     # 0 = aroused, 1 = relaxed
     t = relax / max(relax + arousal, 1e-12)
 
-    bpm = int(round(125 - 65 * t + 18 * n["gamma"]))
-    register = int(round(2 - 4 * t + 2 * n["gamma"] - n["delta"]))
-    density = clamp(0.35 + 0.50 * arousal + 0.08 * n["gamma"], 0.28, 0.88)
-    velocity = int(round(42 + 48 * relax + 20 * n["alpha"]))
-    gate = clamp(0.52 + 0.38 * t + 0.12 * n["theta"], 0.42, 0.94)
+    bpm = int(round(128 - 38 * t + 22 * n["gamma"]))
+    register = int(round(2 - 3 * t + 2 * n["gamma"] - n["delta"]))
+    density = clamp(0.58 + 0.38 * arousal + 0.12 * n["gamma"], 0.52, 0.96)
+    velocity = int(round(55 + 45 * relax + 25 * n["alpha"]))
+    gate = clamp(0.38 + 0.32 * t + 0.10 * n["theta"], 0.32, 0.78)
 
     return MoodParams(
         bpm=int(clamp(bpm, 55, 150)),
