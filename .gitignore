@@ -1,0 +1,21 @@
+.venv/
+data/
+outputs/
+__pycache__/
+*.pyc
+.DS_Store
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# trained model weights (regenerate with `cli train`)
+models/*.joblib
+
+# keep metrics report for portfolio
+!models/metrics.json
+
+# keep docs screenshots and demo video committed
+!docs/screenshots/
+!docs/screenshots/*.png
+!docs/demo.mp4

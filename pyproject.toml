@@ -1,0 +1,28 @@
+[project]
+name = "eeg-mood-sync"
+version = "0.1.0"
+description = "Ambient MIDI driven by EEG alpha/beta band power"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "mido>=1.3",
+  "mne>=1.5",
+  "openneuro-py>=0.5",
+  "streamlit>=1.0,<1.13",
+  "pandas>=1.5",
+  "matplotlib>=3.5",
+  "scikit-learn>=1.3",
+  "joblib>=1.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
